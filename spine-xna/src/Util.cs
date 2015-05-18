@@ -1,29 +1,35 @@
-/*******************************************************************************
- * Copyright (c) 2013, Esoteric Software
+/******************************************************************************
+ * Spine Runtimes Software License
+ * Version 2.3
+ * 
+ * Copyright (c) 2013-2015, Esoteric Software
  * All rights reserved.
  * 
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * You are granted a perpetual, non-exclusive, non-sublicensable and
+ * non-transferable license to use, install, execute and perform the Spine
+ * Runtimes Software (the "Software") and derivative works solely for personal
+ * or internal use. Without the written permission of Esoteric Software (see
+ * Section 2 of the Spine Software License Agreement), you may not (a) modify,
+ * translate, adapt or otherwise create derivative works, improvements of the
+ * Software or develop new applications using the Software or (b) remove,
+ * delete, alter or obscure any trademarks or any copyright, trademark, patent
+ * or other intellectual property or proprietary rights notices on or in the
+ * Software, including any copy thereof. Redistributions in binary or source
+ * form must include this license and terms.
  * 
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- ******************************************************************************/
+ * THIS SOFTWARE IS PROVIDED BY ESOTERIC SOFTWARE "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
+ * EVENT SHALL ESOTERIC SOFTWARE BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *****************************************************************************/
 
-﻿using System;
+using System;
 using System.IO;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -35,31 +41,31 @@ using Windows.Storage;
 
 namespace Spine {
 
-    static public class Util {
+	static public class Util {
 #if WINDOWS_STOREAPP
-		private static async Task<Texture2D> LoadFile(GraphicsDevice device, String path)
-        {
-            var folder = Windows.ApplicationModel.Package.Current.InstalledLocation;
+		private static async Task<Texture2D> LoadFile(GraphicsDevice device, String path) {
+			var folder = Windows.ApplicationModel.Package.Current.InstalledLocation;
+			var file = await folder.GetFileAsync(path).AsTask().ConfigureAwait(false);
+			try {
+				return Util.LoadTexture(device, await file.OpenStreamForReadAsync().ConfigureAwait(false));
+			} catch (Exception ex) {
+				throw new Exception("Error reading texture file: " + path, ex);
+			}
+		}
 
-            var file = await folder.GetFileAsync(path).AsTask().ConfigureAwait(false);
-
-            try
-            {
-                return Util.LoadTexture(device, await file.OpenStreamForReadAsync().ConfigureAwait(false));
-            }
-            catch (Exception ex)
-            {
-                throw new Exception("Error reading texture file: " + path, ex);
-            }
-        }
-
-        static public Texture2D LoadTexture (GraphicsDevice device, String path)
-        {
-            return LoadFile(device, path).Result;
+		static public Texture2D LoadTexture (GraphicsDevice device, String path) {
+			return LoadFile(device, path).Result;
 		}
 #else
 		static public Texture2D LoadTexture (GraphicsDevice device, String path) {
-			using (Stream input = new FileStream(path, FileMode.Open, FileAccess.Read)) {
+
+#if WINDOWS_PHONE
+            Stream stream = Microsoft.Xna.Framework.TitleContainer.OpenStream(path);
+            using (Stream input = stream)
+            {
+#else
+            using (Stream input = new FileStream(path, FileMode.Open, FileAccess.Read)) {
+#endif
 				try {
 					return Util.LoadTexture(device, input);
 				} catch (Exception ex) {
@@ -67,61 +73,10 @@ namespace Spine {
 				}
 			}
 		}
-
 #endif
+
 		static public Texture2D LoadTexture (GraphicsDevice device, Stream input) {
-			Texture2D file = Texture2D.FromStream(device, input);
-
-			// Setup a render target to hold our final texture which will have premulitplied alpha values
-			RenderTarget2D result = new RenderTarget2D(device, file.Width, file.Height);
-			device.SetRenderTarget(result);
-			device.Clear(Color.Black);
-
-			// Multiply each color by the source alpha, and write in just the color values into the final texture
-			BlendState blendColor = new BlendState();
-			blendColor.ColorWriteChannels = ColorWriteChannels.Red | ColorWriteChannels.Green | ColorWriteChannels.Blue;
-			blendColor.AlphaDestinationBlend = Blend.Zero;
-			blendColor.ColorDestinationBlend = Blend.Zero;
-			blendColor.AlphaSourceBlend = Blend.SourceAlpha;
-			blendColor.ColorSourceBlend = Blend.SourceAlpha;
-
-			SpriteBatch spriteBatch = new SpriteBatch(device);
-			spriteBatch.Begin(SpriteSortMode.Immediate, blendColor);
-			spriteBatch.Draw(file, file.Bounds, Color.White);
-			spriteBatch.End();
-
-			// Now copy over the alpha values from the PNG source texture to the final one, without multiplying them
-			BlendState blendAlpha = new BlendState();
-			blendAlpha.ColorWriteChannels = ColorWriteChannels.Alpha;
-			blendAlpha.AlphaDestinationBlend = Blend.Zero;
-			blendAlpha.ColorDestinationBlend = Blend.Zero;
-			blendAlpha.AlphaSourceBlend = Blend.One;
-			blendAlpha.ColorSourceBlend = Blend.One;
-
-			spriteBatch.Begin(SpriteSortMode.Immediate, blendAlpha);
-			spriteBatch.Draw(file, file.Bounds, Color.White);
-			spriteBatch.End();
-
-			// Release the GPU back to drawing to the screen
-			device.SetRenderTarget(null);
-
-#if IOS
-			return result as Texture2D;
-#else
-			// RenderTarget2D are volatile and will be lost on screen resolution changes.
-			// So instead of using this directly, we create a non-voliate Texture2D.
-			// This is computationally slower, but should be safe as long as it is done
-			// on load.
-			Texture2D resultTexture = new Texture2D(device, file.Width, file.Height);
-			Color[] resultContent = new Color[Convert.ToInt32(file.Width * file.Height)];
-			result.GetData(resultContent);
-			resultTexture.SetData(resultContent);
-	
-			// Dispose of the RenderTarget2D immediately.
-            result.Dispose();
-      			
-			return resultTexture;
-#endif
+			return Texture2D.FromStream(device, input);
 		}
 	}
 }

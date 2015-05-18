@@ -1,10 +1,43 @@
+/******************************************************************************
+ * Spine Runtimes Software License
+ * Version 2.3
+ * 
+ * Copyright (c) 2013-2015, Esoteric Software
+ * All rights reserved.
+ * 
+ * You are granted a perpetual, non-exclusive, non-sublicensable and
+ * non-transferable license to use, install, execute and perform the Spine
+ * Runtimes Software (the "Software") and derivative works solely for personal
+ * or internal use. Without the written permission of Esoteric Software (see
+ * Section 2 of the Spine Software License Agreement), you may not (a) modify,
+ * translate, adapt or otherwise create derivative works, improvements of the
+ * Software or develop new applications using the Software or (b) remove,
+ * delete, alter or obscure any trademarks or any copyright, trademark, patent
+ * or other intellectual property or proprietary rights notices on or in the
+ * Software, including any copy thereof. Redistributions in binary or source
+ * form must include this license and terms.
+ * 
+ * THIS SOFTWARE IS PROVIDED BY ESOTERIC SOFTWARE "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
+ * EVENT SHALL ESOTERIC SOFTWARE BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *****************************************************************************/
+
 package spine.flash {
 import flash.display.Bitmap;
 import flash.display.BitmapData;
+import flash.display.BlendMode;
 import flash.display.DisplayObject;
 import flash.display.DisplayObjectContainer;
 import flash.display.Sprite;
 import flash.events.Event;
+import flash.geom.ColorTransform;
 import flash.geom.Matrix;
 import flash.geom.Point;
 import flash.geom.Rectangle;
@@ -20,6 +53,8 @@ import spine.attachments.RegionAttachment;
 public class SkeletonSprite extends Sprite {
 	static private var tempPoint:Point = new Point();
 	static private var tempMatrix:Matrix = new Matrix();
+	static private var blendModes:Vector.<String> = new <String>[
+		BlendMode.NORMAL, BlendMode.ADD, BlendMode.MULTIPLY, BlendMode.SCREEN];
 
 	private var _skeleton:Skeleton;
 	public var timeScale:Number = 1;
@@ -53,40 +88,60 @@ public class SkeletonSprite extends Sprite {
 				var region:AtlasRegion = AtlasRegion(regionAttachment.rendererObject);
 				if (!wrapper) {
 					var bitmapData:BitmapData = region.page.rendererObject as BitmapData;
-					var regionData:BitmapData;
-					if (region.rotate) {
-						regionData = new BitmapData(region.height, region.width);
-						regionData.copyPixels(bitmapData, //
-							new Rectangle(region.x, region.y, region.height, region.width), //
-							new Point());
-					} else {
-						regionData = new BitmapData(region.width, region.height);
-						regionData.copyPixels(bitmapData, //
-							new Rectangle(region.x, region.y, region.width, region.height), //
-							new Point());
-					}
+					var regionWidth:Number = region.rotate ? region.height : region.width;
+					var regionHeight:Number = region.rotate ? region.width : region.height;
+					var regionData:BitmapData = new BitmapData(regionWidth, regionHeight);
+					regionData.copyPixels(bitmapData, new Rectangle(region.x, region.y, regionWidth, regionHeight), new Point());
 
 					var bitmap:Bitmap = new Bitmap(regionData);
 					bitmap.smoothing = true;
-					bitmap.x = -regionAttachment.width / 2; // Registration point.
-					bitmap.y = -regionAttachment.height / 2;
-					if (region.rotate) {
-						bitmap.rotation = 90;
-						bitmap.x += region.width;
-					}
 
+					// Rotate and scale using default registration point (top left corner, y-down, CW) instead of image center.
+					bitmap.rotation = -regionAttachment.rotation;
+					bitmap.scaleX = regionAttachment.scaleX * (regionAttachment.width / region.width);
+					bitmap.scaleY = regionAttachment.scaleY * (regionAttachment.height / region.height);
+					
+
+					// Position using attachment translation, shifted as if scale and rotation were at image center.
+					var radians:Number = -regionAttachment.rotation * Math.PI / 180;
+					var cos:Number = Math.cos(radians);
+					var sin:Number = Math.sin(radians);
+					var shiftX:Number = -regionAttachment.width / 2 * regionAttachment.scaleX;
+					var shiftY:Number = -regionAttachment.height / 2 * regionAttachment.scaleY;
+					if (region.rotate) {
+						bitmap.rotation += 90;
+						shiftX += regionHeight * (regionAttachment.width / region.width);
+					}
+					bitmap.x = regionAttachment.x + shiftX * cos - shiftY * sin;
+					bitmap.y = -regionAttachment.y + shiftX * sin + shiftY * cos;
+
+					// Use bone as registration point.
 					wrapper = new Sprite();
+					wrapper.transform.colorTransform = new ColorTransform();
 					wrapper.addChild(bitmap);
 					regionAttachment["wrapper"] = wrapper;
 				}
+
+				wrapper.blendMode = blendModes[slot.data.blendMode.ordinal];
+
+				var colorTransform:ColorTransform = wrapper.transform.colorTransform;
+				colorTransform.redMultiplier = skeleton.r * slot.r * regionAttachment.r;
+				colorTransform.greenMultiplier = skeleton.g * slot.g * regionAttachment.g;
+				colorTransform.blueMultiplier = skeleton.b * slot.b * regionAttachment.b;
+				colorTransform.alphaMultiplier = skeleton.a * slot.a * regionAttachment.a;
+				wrapper.transform.colorTransform = colorTransform;
+
 				var bone:Bone = slot.bone;
-				var x:Number = regionAttachment.x - region.offsetX;
-				var y:Number = regionAttachment.y - region.offsetY;
-				wrapper.x = bone.worldX + x * bone.m00 + y * bone.m01;
-				wrapper.y = bone.worldY + x * bone.m10 + y * bone.m11;
-				wrapper.rotation = -(bone.worldRotation + regionAttachment.rotation);
-				wrapper.scaleX = bone.worldScaleX + regionAttachment.scaleX - 1;
-				wrapper.scaleY = bone.worldScaleY + regionAttachment.scaleY - 1;
+				var flipX:int = skeleton.flipX ? -1 : 1;
+				var flipY:int = skeleton.flipY ? -1 : 1;
+				if (bone.worldFlipX) flipX = -flipX;
+				if (bone.worldFlipY) flipY = -flipY;
+
+				wrapper.x = bone.worldX;
+				wrapper.y = bone.worldY;
+				wrapper.rotation = -bone.worldRotation * flipX * flipY;
+				wrapper.scaleX = bone.worldScaleX * flipX;
+				wrapper.scaleY = bone.worldScaleY * flipY;
 				addChild(wrapper);
 			}
 		}
@@ -98,4 +153,3 @@ public class SkeletonSprite extends Sprite {
 }
 
 }
-
